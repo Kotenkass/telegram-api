@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telegram-api-deployment
+  labels:
+    app: telegram-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: telegram-api
+  template:
+    metadata:
+      labels:
+        app: telegram-api
+    spec:
+      containers:
+        - name: telegram-api
+          image: DOCKERHUBUSERNAME/telegram-api:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TELEGRAM_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: telegram-api-env
+                  key: TELEGRAM_TOKEN
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: telegram-api-env
+                  key: REDIS_URL
+            - name: USER_SERVICE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: telegram-api-env
+                  key: USER_SERVICE_URL

@@ -1,0 +1,28 @@
+# Git
+.git/
+.gitignore
+
+# Docker
+.dockerignore
+
+# Go build/test artifacts
+/bin/
+/dist/
+/vendor/
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local env
+.env
+.env.*
+!.env.example
