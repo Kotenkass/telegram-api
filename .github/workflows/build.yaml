@@ -28,19 +28,43 @@ jobs:
           tags: ${{ secrets.DOCKER_HUB_USERNAME }}/telegram-api:latest
 
   deploy:
-    runs-on: self-hosted
+    runs-on: [self-hosted, k8s, kotenkass-telegram-api]
     needs: build
     env:
-      MANIFEST_PATH: /workspace/manifest.yaml
-      KUBECONFIG: /root/.kube/config
+      MANIFEST_PATH: manifest.yaml
+      KUBECONFIG: /tmp/kubeconfig
       TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
       REDIS_URL: ${{ secrets.REDIS_URL }}
       USER_SERVICE_URL: ${{ secrets.USER_SERVICE_URL }}
-    container:
-      image: bitnami/kubectl:latest
-      options: --user 0 -v /home/anikolaev/.kube:/root/.kube:ro -v /home/anikolaev/telegram-api:/workspace:ro
 
     steps:
+      - name: Create in-cluster kubeconfig
+        run: |
+          SERVER="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT_HTTPS:-${KUBERNETES_SERVICE_PORT:-443}}"
+
+          cat > "$KUBECONFIG" <<EOF
+          apiVersion: v1
+          kind: Config
+          clusters:
+          - name: in-cluster
+            cluster:
+              server: ${SERVER}
+              certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          contexts:
+          - name: in-cluster
+            context:
+              cluster: in-cluster
+              user: in-cluster
+              namespace: default
+          current-context: in-cluster
+          users:
+          - name: in-cluster
+            user:
+              tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+          EOF
+
+          kubectl --kubeconfig "$KUBECONFIG" auth can-i get pods --all-namespaces
+
       - name: Create or update telegram-api environment Secret
         run: |
           kubectl --kubeconfig "$KUBECONFIG" create secret generic telegram-api-env \
