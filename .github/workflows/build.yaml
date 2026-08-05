@@ -34,6 +34,12 @@ jobs:
     - X64
     - k8s
     - kotenkass-telegram-api
+
+    container:
+      image: bitnami/kubectl:latest
+      volumes:
+        - /var/run/secrets/kubernetes.io/serviceaccount:/var/run/secrets/kubernetes.io/serviceaccount
+      options: --user 0
     
     needs: build
     env:
