@@ -28,7 +28,10 @@ jobs:
           tags: ${{ secrets.DOCKER_HUB_USERNAME }}/telegram-api:latest
 
   deploy:
-    runs-on: [self-hosted]
+    runs-on:
+    - self-hosted
+    - kotenkass-telegram-api
+    
     needs: build
     env:
       MANIFEST_PATH: manifest.yaml
