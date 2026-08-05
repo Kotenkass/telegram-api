@@ -30,6 +30,9 @@ jobs:
   deploy:
     runs-on:
     - self-hosted
+    - Linux
+    - X64
+    - k8s
     - kotenkass-telegram-api
     
     needs: build
