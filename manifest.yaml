@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: telegram-api
-          image: DOCKERHUBUSERNAME/telegram-api:latest
+          image: docker.io/Kotenkass/scheduler:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: TELEGRAM_TOKEN
