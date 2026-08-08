@@ -101,7 +101,7 @@ spec:
     spec:
       containers:
         - name: telegram-api
-          image: docker.io/Kotenkass/telegram-api
+          image: docker.io/kotenkass/telegram-api
           imagePullPolicy: IfNotPresent
           env:
             - name: TELEGRAM_TOKEN
