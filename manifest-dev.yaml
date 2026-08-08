@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telegram-api-deployment
+  namespace: dev
+  labels:
+    app: telegram-api
+    environment: dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: telegram-api
+      environment: dev
+  template:
+    metadata:
+      labels:
+        app: telegram-api
+        environment: dev
+    spec:
+      containers:
+        - name: telegram-api
+          image: docker.io/Kotenkass/telegram-api:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TELEGRAM_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: telegram-api-dev-env
+                  key: TELEGRAM_TOKEN
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: telegram-api-dev-env
+                  key: REDIS_URL
+            - name: USER_SERVICE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: telegram-api-dev-env
+                  key: USER_SERVICE_URL
+            - name: LOG_LEVEL
+              value: debug
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - test -n "$TELEGRAM_TOKEN"
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 12
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - test -n "$TELEGRAM_TOKEN"
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
