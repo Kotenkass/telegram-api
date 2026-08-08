@@ -99,6 +99,8 @@ spec:
         app: telegram-api
         environment: dev
     spec:
+      imagePullSecrets:
+        - name: docker-hub-pull-secret
       containers:
         - name: telegram-api
           image: docker.io/kotenkass/telegram-api
