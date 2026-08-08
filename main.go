@@ -47,6 +47,9 @@ func main() {
 	if token == "" {
 		log.Fatal("TELEGRAM_TOKEN environment variable is required")
 	}
+	if debugEnabled() {
+		log.Printf("telegram-api started with debug logging enabled")
+	}
 
 	redisURL := os.Getenv("REDIS_URL")
 	if redisURL == "" {
@@ -84,6 +87,7 @@ func main() {
 
 		exists, err := svc.userExists(context.Background(), chat.ID)
 		if err != nil {
+			logDebug("check user exists failed chat_id=%d: %v", chat.ID, err)
 			log.Printf("check user exists chat_id=%d: %v", chat.ID, err)
 			return c.Send("Failed to check user status. Please try again later.")
 		}
@@ -101,6 +105,7 @@ func main() {
 		}
 
 		if err := svc.createUser(context.Background(), user); err != nil {
+			logDebug("create user failed chat_id=%d: %v", chat.ID, err)
 			log.Printf("create user chat_id=%d: %v", chat.ID, err)
 			return c.Send("Failed to register user. Please try again later.")
 		}
@@ -189,6 +194,7 @@ func (s *userService) listUsers(ctx context.Context) ([]telegramUser, error) {
 func subscribeToRedisMessages(ctx context.Context, redisURL string, bot *telebot.Bot, svc *userService) {
 	opt, err := redis.ParseURL(redisURL)
 	if err != nil {
+		logDebug("parse redis url %q: %v", redisURL, err)
 		log.Printf("parse redis url %q: %v", redisURL, err)
 		return
 	}
@@ -197,6 +203,7 @@ func subscribeToRedisMessages(ctx context.Context, redisURL string, bot *telebot
 	defer rdb.Close()
 
 	if err := rdb.Ping(ctx).Err(); err != nil {
+		logDebug("connect redis: %v", err)
 		log.Printf("connect redis: %v", err)
 		return
 	}
@@ -217,9 +224,20 @@ func subscribeToRedisMessages(ctx context.Context, redisURL string, bot *telebot
 				continue
 			}
 			if err := sendBroadcast(ctx, bot, svc, msg.Payload); err != nil {
+				logDebug("send broadcast message failed: %v", err)
 				log.Printf("send broadcast message: %v", err)
 			}
 		}
+	}
+}
+
+func debugEnabled() bool {
+	return strings.EqualFold(os.Getenv("LOG_LEVEL"), "debug")
+}
+
+func logDebug(format string, args ...any) {
+	if debugEnabled() {
+		log.Printf(format, args...)
 	}
 }
 
