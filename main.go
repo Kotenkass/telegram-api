@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,7 +14,11 @@ import (
 	"syscall"
 	"time"
 
+	applogger "github.com/Kotenkass/telegram-api/internal/logger"
+	requestlogger "github.com/Kotenkass/telegram-api/internal/middleware"
+	"github.com/labstack/echo/v4"
 	"github.com/redis/go-redis/v9"
+	"github.com/sirupsen/logrus"
 	telebot "gopkg.in/telebot.v3"
 )
 
@@ -43,13 +46,15 @@ type userService struct {
 }
 
 func main() {
+	log := applogger.NewLogger()
+
 	token := os.Getenv("TELEGRAM_TOKEN")
 	if token == "" {
-		log.Fatal("TELEGRAM_TOKEN environment variable is required")
+		log.Error("TELEGRAM_TOKEN environment variable is required")
+		os.Exit(1)
 	}
-	if debugEnabled() {
-		log.Printf("telegram-api started with debug logging enabled")
-	}
+
+	log.WithField("log_level", os.Getenv(applogger.EnvLogLevel)).Info("telegram-api starting")
 
 	redisURL := os.Getenv("REDIS_URL")
 	if redisURL == "" {
@@ -61,8 +66,24 @@ func main() {
 		Poller: &telebot.LongPoller{Timeout: 10 * time.Second},
 	})
 	if err != nil {
-		log.Fatalf("create telegram bot: %v", err)
+		log.WithError(err).Fatal("create telegram bot failed")
 	}
+	log.Info("telegram bot initialized")
+
+	e := echo.New()
+	e.HideBanner = true
+	e.HidePort = true
+	e.Use(requestlogger.RequestLogger(log))
+	e.GET("/healthz", func(c echo.Context) error {
+		return c.String(http.StatusOK, "ok")
+	})
+
+	go func() {
+		log.WithField("addr", ":8080").Info("http server starting")
+		if err := e.Start(":8080"); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.WithError(err).Error("http server failed")
+		}
+	}()
 
 	client := &userClient{
 		httpClient: &http.Client{Timeout: 10 * time.Second},
@@ -77,21 +98,23 @@ func main() {
 	bot.Handle("/start", func(c telebot.Context) error {
 		chat := c.Chat()
 		if chat == nil {
+			log.Error("cannot create user: missing chat information")
 			return c.Send("Cannot create user: missing chat information.")
 		}
 
 		sender := c.Sender()
 		if sender == nil {
+			log.WithField("chat_id", chat.ID).Error("cannot create user: missing sender information")
 			return c.Send("Cannot create user: missing sender information.")
 		}
 
 		exists, err := svc.userExists(context.Background(), chat.ID)
 		if err != nil {
-			logDebug("check user exists failed chat_id=%d: %v", chat.ID, err)
-			log.Printf("check user exists chat_id=%d: %v", chat.ID, err)
+			log.WithError(err).WithField("chat_id", chat.ID).Error("check user exists failed")
 			return c.Send("Failed to check user status. Please try again later.")
 		}
 		if exists {
+			log.WithField("chat_id", chat.ID).Info("telegram user already registered")
 			return c.Send("Welcome back!")
 		}
 
@@ -105,10 +128,18 @@ func main() {
 		}
 
 		if err := svc.createUser(context.Background(), user); err != nil {
-			logDebug("create user failed chat_id=%d: %v", chat.ID, err)
-			log.Printf("create user chat_id=%d: %v", chat.ID, err)
+			log.WithFields(logrus.Fields{
+				"chat_id":     chat.ID,
+				"telegram_id": sender.ID,
+			}).WithError(err).Error("create user failed")
 			return c.Send("Failed to register user. Please try again later.")
 		}
+
+		log.WithFields(logrus.Fields{
+			"chat_id":     chat.ID,
+			"telegram_id": sender.ID,
+			"username":    sender.Username,
+		}).Info("telegram user registered")
 
 		return c.Send("Welcome! You have been registered.")
 	})
@@ -116,7 +147,16 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	go subscribeToRedisMessages(ctx, redisURL, bot, svc)
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := e.Shutdown(shutdownCtx); err != nil {
+			log.WithError(err).Error("shutdown http server failed")
+		}
+	}()
+
+	go subscribeToRedisMessages(ctx, redisURL, bot, svc, log)
 
 	bot.Start()
 }
@@ -191,11 +231,10 @@ func (s *userService) listUsers(ctx context.Context) ([]telegramUser, error) {
 	return users, nil
 }
 
-func subscribeToRedisMessages(ctx context.Context, redisURL string, bot *telebot.Bot, svc *userService) {
+func subscribeToRedisMessages(ctx context.Context, redisURL string, bot *telebot.Bot, svc *userService, log *logrus.Logger) {
 	opt, err := redis.ParseURL(redisURL)
 	if err != nil {
-		logDebug("parse redis url %q: %v", redisURL, err)
-		log.Printf("parse redis url %q: %v", redisURL, err)
+		log.WithError(err).Error("parse redis url failed")
 		return
 	}
 
@@ -203,8 +242,7 @@ func subscribeToRedisMessages(ctx context.Context, redisURL string, bot *telebot
 	defer rdb.Close()
 
 	if err := rdb.Ping(ctx).Err(); err != nil {
-		logDebug("connect redis: %v", err)
-		log.Printf("connect redis: %v", err)
+		log.WithError(err).Error("connect redis failed")
 		return
 	}
 
@@ -223,21 +261,14 @@ func subscribeToRedisMessages(ctx context.Context, redisURL string, bot *telebot
 			if strings.TrimSpace(msg.Payload) == "" {
 				continue
 			}
+			log.WithFields(logrus.Fields{
+				"channel":        redisChannel,
+				"payload_length": len(msg.Payload),
+			}).Info("redis message received")
 			if err := sendBroadcast(ctx, bot, svc, msg.Payload); err != nil {
-				logDebug("send broadcast message failed: %v", err)
-				log.Printf("send broadcast message: %v", err)
+				log.WithError(err).Error("send broadcast message failed")
 			}
 		}
-	}
-}
-
-func debugEnabled() bool {
-	return strings.EqualFold(os.Getenv("LOG_LEVEL"), "debug")
-}
-
-func logDebug(format string, args ...any) {
-	if debugEnabled() {
-		log.Printf(format, args...)
 	}
 }
 
