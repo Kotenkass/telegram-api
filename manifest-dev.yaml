@@ -8,7 +8,7 @@ metadata:
 apiVersion: v1
 kind: Service
 metadata:
-  name: redis-dev
+  name: redis-master
   namespace: dev
   labels:
     app: redis
@@ -27,7 +27,7 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: redis-dev
+  name: redis-master
   namespace: dev
   labels:
     app: redis
@@ -82,7 +82,7 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: telegram-api-deployment
+  name: telegram-api
   namespace: dev
   labels:
     app: telegram-api
