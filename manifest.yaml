@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: telegram-api-deployment
+  name: telegram-api
   labels:
     app: telegram-api
 spec:
@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: telegram-api
-          image: docker.io/Kotenkass/telegram-api:latest
+          image: docker.io/anikolaevdo/telegram-api:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: TELEGRAM_TOKEN
