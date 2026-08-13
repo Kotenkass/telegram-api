@@ -24,6 +24,7 @@ import (
 
 const (
 	userServiceURL = "http://user-service/users"
+	answersURL     = "http://answers"
 	redisChannel   = "send_message"
 )
 
@@ -43,6 +44,22 @@ type telegramUser struct {
 
 type userService struct {
 	client *userClient
+}
+
+type answerClient struct {
+	httpClient *http.Client
+	baseURL    string
+}
+
+type answerRequest struct {
+	ChatID     int64  `json:"chat_id"`
+	TelegramID int64  `json:"telegram_id"`
+	Text       string `json:"text"`
+	SentAt     string `json:"sent_at"`
+}
+
+type answerService struct {
+	client *answerClient
 }
 
 func main() {
@@ -94,6 +111,13 @@ func main() {
 	}
 
 	svc := &userService{client: client}
+	answerSvc := &answerService{client: &answerClient{
+		httpClient: &http.Client{Timeout: 3 * time.Second},
+		baseURL:    strings.TrimRight(os.Getenv("ANSWERS_URL"), "/"),
+	}}
+	if answerSvc.client.baseURL == "" {
+		answerSvc.client.baseURL = answersURL
+	}
 
 	bot.Handle("/start", func(c telebot.Context) error {
 		chat := c.Chat()
@@ -142,6 +166,51 @@ func main() {
 		}).Info("telegram user registered")
 
 		return c.Send("Welcome! You have been registered.")
+	})
+
+	bot.Handle(telebot.OnText, func(c telebot.Context) error {
+		msg := c.Message()
+		if msg == nil || msg.Text == "" {
+			return nil
+		}
+		if strings.HasPrefix(msg.Text, "/") {
+			return nil
+		}
+		if msg.Sender == nil || msg.Chat == nil {
+			log.WithField("message_id", msg.ID).Error("cannot save answer: missing sender or chat information")
+			return c.Reply("Не получилось сохранить, попробуйте позже")
+		}
+
+		if err := answerSvc.saveText(context.Background(), answerRequest{
+			ChatID:     msg.Chat.ID,
+			TelegramID: msg.Sender.ID,
+			Text:       msg.Text,
+			SentAt:     msg.Time().UTC().Format(time.RFC3339),
+		}); err != nil {
+			log.WithError(err).WithFields(logrus.Fields{
+				"chat_id":     msg.Chat.ID,
+				"telegram_id": msg.Sender.ID,
+			}).Error("save answer failed")
+			return c.Reply("Не получилось сохранить, попробуйте позже")
+		}
+
+		return c.Reply("Записал")
+	})
+
+	bot.Handle(telebot.OnMedia, func(c telebot.Context) error {
+		return c.Reply("Поддерживается только текст")
+	})
+
+	bot.Handle(telebot.OnSticker, func(c telebot.Context) error {
+		return c.Reply("Поддерживается только текст")
+	})
+
+	bot.Handle(telebot.OnVoice, func(c telebot.Context) error {
+		return c.Reply("Поддерживается только текст")
+	})
+
+	bot.Handle(telebot.OnPhoto, func(c telebot.Context) error {
+		return c.Reply("Поддерживается только текст")
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -229,6 +298,54 @@ func (s *userService) listUsers(ctx context.Context) ([]telegramUser, error) {
 		return nil, err
 	}
 	return users, nil
+}
+
+func (s *answerService) saveText(ctx context.Context, req answerRequest) error {
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("marshal answer request: %w", err)
+	}
+
+	if err := s.client.post(ctx, "/answers", payload); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *answerClient) post(ctx context.Context, path string, body []byte) error {
+	url := c.baseURL + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 500 && resp.StatusCode < 600 {
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("create retry request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err = c.httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("execute retry request: %w", err)
+		}
+		defer resp.Body.Close()
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
 func subscribeToRedisMessages(ctx context.Context, redisURL string, bot *telebot.Bot, svc *userService, log *logrus.Logger) {
