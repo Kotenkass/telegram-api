@@ -327,20 +327,6 @@ func (c *answerClient) post(ctx context.Context, path string, body []byte) error
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 500 && resp.StatusCode < 600 {
-		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-		if err != nil {
-			return fmt.Errorf("create retry request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err = c.httpClient.Do(req)
-		if err != nil {
-			return fmt.Errorf("execute retry request: %w", err)
-		}
-		defer resp.Body.Close()
-	}
-
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
