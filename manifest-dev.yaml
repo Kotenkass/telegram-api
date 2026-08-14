@@ -103,8 +103,8 @@ spec:
         - name: docker-hub-pull-secret
       containers:
         - name: telegram-api
-          image: docker.io/kotenkass/telegram-api
-          imagePullPolicy: IfNotPresent
+          image: docker.io/anikolaevdo/telegram-api:dev
+          imagePullPolicy: Always
           env:
             - name: TELEGRAM_TOKEN
               valueFrom:
