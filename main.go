@@ -24,7 +24,7 @@ import (
 
 const (
 	userServiceURL = "http://user-service/users"
-	answersURL     = "http://answers"
+	answersURL     = "http://answers:8080"
 	redisChannel   = "send_message"
 )
 
