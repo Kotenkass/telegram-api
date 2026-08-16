@@ -26,6 +26,8 @@ const (
 	userServiceURL = "http://user-service/users"
 	answersURL     = "http://answers:8080"
 	redisChannel   = "send_message"
+
+	defaultTelegramMessage = "Поддерживается только текст"
 )
 
 type userClient struct {
@@ -87,131 +89,11 @@ func main() {
 	}
 	log.Info("telegram bot initialized")
 
-	e := echo.New()
-	e.HideBanner = true
-	e.HidePort = true
-	e.Use(requestlogger.RequestLogger(log))
-	e.GET("/healthz", func(c echo.Context) error {
-		return c.String(http.StatusOK, "ok")
-	})
+	svc := &userService{client: newUserClient()}
+	answerSvc := newAnswerService()
 
-	go func() {
-		log.WithField("addr", ":8080").Info("http server starting")
-		if err := e.Start(":8080"); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.WithError(err).Error("http server failed")
-		}
-	}()
-
-	client := &userClient{
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		baseURL:    strings.TrimRight(os.Getenv("USER_SERVICE_URL"), "/"),
-	}
-	if client.baseURL == "" {
-		client.baseURL = userServiceURL
-	}
-
-	svc := &userService{client: client}
-	answerSvc := &answerService{client: &answerClient{
-		httpClient: &http.Client{Timeout: 3 * time.Second},
-		baseURL:    strings.TrimRight(os.Getenv("ANSWERS_URL"), "/"),
-	}}
-	if answerSvc.client.baseURL == "" {
-		answerSvc.client.baseURL = answersURL
-	}
-
-	bot.Handle("/start", func(c telebot.Context) error {
-		chat := c.Chat()
-		if chat == nil {
-			log.Error("cannot create user: missing chat information")
-			return c.Send("Cannot create user: missing chat information.")
-		}
-
-		sender := c.Sender()
-		if sender == nil {
-			log.WithField("chat_id", chat.ID).Error("cannot create user: missing sender information")
-			return c.Send("Cannot create user: missing sender information.")
-		}
-
-		exists, err := svc.userExists(context.Background(), chat.ID)
-		if err != nil {
-			log.WithError(err).WithField("chat_id", chat.ID).Error("check user exists failed")
-			return c.Send("Failed to check user status. Please try again later.")
-		}
-		if exists {
-			log.WithField("chat_id", chat.ID).Info("telegram user already registered")
-			return c.Send("Welcome back!")
-		}
-
-		user := telegramUser{
-			ChatID:       chat.ID,
-			TelegramID:   sender.ID,
-			FirstName:    sender.FirstName,
-			LastName:     sender.LastName,
-			LanguageCode: sender.LanguageCode,
-			Username:     sender.Username,
-		}
-
-		if err := svc.createUser(context.Background(), user); err != nil {
-			log.WithFields(logrus.Fields{
-				"chat_id":     chat.ID,
-				"telegram_id": sender.ID,
-			}).WithError(err).Error("create user failed")
-			return c.Send("Failed to register user. Please try again later.")
-		}
-
-		log.WithFields(logrus.Fields{
-			"chat_id":     chat.ID,
-			"telegram_id": sender.ID,
-			"username":    sender.Username,
-		}).Info("telegram user registered")
-
-		return c.Send("Welcome! You have been registered.")
-	})
-
-	bot.Handle(telebot.OnText, func(c telebot.Context) error {
-		msg := c.Message()
-		if msg == nil || msg.Text == "" {
-			return nil
-		}
-		if strings.HasPrefix(msg.Text, "/") {
-			return nil
-		}
-		if msg.Sender == nil || msg.Chat == nil {
-			log.WithField("message_id", msg.ID).Error("cannot save answer: missing sender or chat information")
-			return c.Reply("Не получилось сохранить, попробуйте позже")
-		}
-
-		if err := answerSvc.saveText(context.Background(), answerRequest{
-			ChatID:     msg.Chat.ID,
-			TelegramID: msg.Sender.ID,
-			Text:       msg.Text,
-			SentAt:     msg.Time().UTC().Format(time.RFC3339),
-		}); err != nil {
-			log.WithError(err).WithFields(logrus.Fields{
-				"chat_id":     msg.Chat.ID,
-				"telegram_id": msg.Sender.ID,
-			}).Error("save answer failed")
-			return c.Reply("Не получилось сохранить, попробуйте позже")
-		}
-
-		return c.Reply("Записал")
-	})
-
-	bot.Handle(telebot.OnMedia, func(c telebot.Context) error {
-		return c.Reply("Поддерживается только текст")
-	})
-
-	bot.Handle(telebot.OnSticker, func(c telebot.Context) error {
-		return c.Reply("Поддерживается только текст")
-	})
-
-	bot.Handle(telebot.OnVoice, func(c telebot.Context) error {
-		return c.Reply("Поддерживается только текст")
-	})
-
-	bot.Handle(telebot.OnPhoto, func(c telebot.Context) error {
-		return c.Reply("Поддерживается только текст")
-	})
+	e := setupHTTPServer(log)
+	registerBotHandlers(log, bot, svc, answerSvc)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -228,6 +110,156 @@ func main() {
 	go subscribeToRedisMessages(ctx, redisURL, bot, svc, log)
 
 	bot.Start()
+}
+
+func newUserClient() *userClient {
+	baseURL := strings.TrimRight(os.Getenv("USER_SERVICE_URL"), "/")
+	if baseURL == "" {
+		baseURL = userServiceURL
+	}
+
+	return &userClient{
+		httpClient: &http.Client{Timeout: 10 * time.Second},
+		baseURL:    baseURL,
+	}
+}
+
+func newAnswerService() *answerService {
+	baseURL := strings.TrimRight(os.Getenv("ANSWERS_URL"), "/")
+	if baseURL == "" {
+		baseURL = answersURL
+	}
+
+	return &answerService{client: &answerClient{
+		httpClient: &http.Client{Timeout: 3 * time.Second},
+		baseURL:    baseURL,
+	}}
+}
+
+func setupHTTPServer(log *logrus.Logger) *echo.Echo {
+	e := echo.New()
+	e.HideBanner = true
+	e.HidePort = true
+	e.Use(requestlogger.RequestLogger(log))
+	e.GET("/healthz", healthzHandler)
+
+	startHTTPServer(log, e)
+
+	return e
+}
+
+func healthzHandler(c echo.Context) error {
+	return c.String(http.StatusOK, "ok")
+}
+
+func startHTTPServer(log *logrus.Logger, e *echo.Echo) {
+	go func() {
+		log.WithField("addr", ":8080").Info("http server starting")
+		if err := e.Start(":8080"); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.WithError(err).Error("http server failed")
+		}
+	}()
+}
+
+func registerBotHandlers(log *logrus.Logger, bot *telebot.Bot, svc *userService, answerSvc *answerService) {
+	bot.Handle("/start", func(c telebot.Context) error {
+		return handleStartCommand(c, log, svc)
+	})
+
+	bot.Handle(telebot.OnText, func(c telebot.Context) error {
+		return handleTextMessage(c, log, answerSvc)
+	})
+
+	registerUnsupportedMessageHandlers(bot)
+}
+
+func handleStartCommand(c telebot.Context, log *logrus.Logger, svc *userService) error {
+	chat := c.Chat()
+	if chat == nil {
+		log.Error("cannot create user: missing chat information")
+		return c.Send("Cannot create user: missing chat information.")
+	}
+
+	sender := c.Sender()
+	if sender == nil {
+		log.WithField("chat_id", chat.ID).Error("cannot create user: missing sender information")
+		return c.Send("Cannot create user: missing sender information.")
+	}
+
+	exists, err := svc.userExists(context.Background(), chat.ID)
+	if err != nil {
+		log.WithError(err).WithField("chat_id", chat.ID).Error("check user exists failed")
+		return c.Send("Failed to check user status. Please try again later.")
+	}
+	if exists {
+		log.WithField("chat_id", chat.ID).Info("telegram user already registered")
+		return c.Send("Welcome back!")
+	}
+
+	user := telegramUser{
+		ChatID:       chat.ID,
+		TelegramID:   sender.ID,
+		FirstName:    sender.FirstName,
+		LastName:     sender.LastName,
+		LanguageCode: sender.LanguageCode,
+		Username:     sender.Username,
+	}
+
+	if err := svc.createUser(context.Background(), user); err != nil {
+		log.WithFields(logrus.Fields{
+			"chat_id":     chat.ID,
+			"telegram_id": sender.ID,
+		}).WithError(err).Error("create user failed")
+		return c.Send("Failed to register user. Please try again later.")
+	}
+
+	log.WithFields(logrus.Fields{
+		"chat_id":     chat.ID,
+		"telegram_id": sender.ID,
+		"username":    sender.Username,
+	}).Info("telegram user registered")
+
+	return c.Send("Welcome! You have been registered.")
+}
+
+func handleTextMessage(c telebot.Context, log *logrus.Logger, answerSvc *answerService) error {
+	msg := c.Message()
+	if msg == nil || msg.Text == "" {
+		return nil
+	}
+	if strings.HasPrefix(msg.Text, "/") {
+		return nil
+	}
+	if msg.Sender == nil || msg.Chat == nil {
+		log.WithField("message_id", msg.ID).Error("cannot save answer: missing sender or chat information")
+		return c.Reply("Не получилось сохранить, попробуйте позже")
+	}
+
+	if err := answerSvc.saveText(context.Background(), answerRequest{
+		ChatID:     msg.Chat.ID,
+		TelegramID: msg.Sender.ID,
+		Text:       msg.Text,
+		SentAt:     msg.Time().UTC().Format(time.RFC3339),
+	}); err != nil {
+		log.WithError(err).WithFields(logrus.Fields{
+			"chat_id":     msg.Chat.ID,
+			"telegram_id": msg.Sender.ID,
+		}).Error("save answer failed")
+		return c.Reply("Не получилось сохранить, попробуйте позже")
+	}
+
+	return c.Reply("Записал")
+}
+
+func registerUnsupportedMessageHandlers(bot *telebot.Bot) {
+	bot.Handle(telebot.OnMedia, handleUnsupportedMessageType)
+	bot.Handle(telebot.OnSticker, handleUnsupportedMessageType)
+	bot.Handle(telebot.OnVoice, handleUnsupportedMessageType)
+	bot.Handle(telebot.OnPhoto, handleUnsupportedMessageType)
+}
+
+func handleUnsupportedMessageType(c telebot.Context) error {
+	return c.Reply(defaultTelegramMessage)
 }
 
 func (c *userClient) doJSONRequest(ctx context.Context, method, path string, in any, out any) error {
