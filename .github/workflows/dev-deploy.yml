@@ -90,13 +90,13 @@ jobs:
         run: kubectl --kubeconfig "$KUBECONFIG" apply -f "$MANIFEST_PATH"
 
       - name: Set Docker image
-        run: kubectl --kubeconfig "$KUBECONFIG" set image deployment/telegram-api-deployment telegram-api="${IMAGE_NAME}:${IMAGE_TAG}" --namespace "$NAMESPACE"
+        run: kubectl --kubeconfig "$KUBECONFIG" set image deployment/telegram-api telegram-api="${IMAGE_NAME}:${IMAGE_TAG}" --namespace "$NAMESPACE"
 
       - name: Restart Deployment
-        run: kubectl --kubeconfig "$KUBECONFIG" rollout restart deployment/telegram-api-deployment --namespace "$NAMESPACE"
+        run: kubectl --kubeconfig "$KUBECONFIG" rollout restart deployment/telegram-api --namespace "$NAMESPACE"
 
       - name: Wait for rollout
-        run: kubectl --kubeconfig "$KUBECONFIG" rollout status deployment/telegram-api-deployment --namespace "$NAMESPACE" --timeout=180s
+        run: kubectl --kubeconfig "$KUBECONFIG" rollout status deployment/telegram-api --namespace "$NAMESPACE" --timeout=180s
 
       - name: Health check
         run: |
