@@ -22,7 +22,7 @@ spec:
             - name: TELEGRAM_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: telegram-api-env
+                  name: telegram-api-token
                   key: TELEGRAM_TOKEN
             - name: REDIS_URL
               valueFrom:
