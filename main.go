@@ -35,6 +35,11 @@ type userClient struct {
 	baseURL    string
 }
 
+type webAdminClient struct {
+	httpClient *http.Client
+	baseURL    string
+}
+
 type telegramUser struct {
 	ChatID       int64  `json:"chatID"`
 	TelegramID   int64  `json:"telegramID"`
@@ -46,6 +51,10 @@ type telegramUser struct {
 
 type userService struct {
 	client *userClient
+}
+
+type webAdminService struct {
+	client *webAdminClient
 }
 
 type answerClient struct {
@@ -62,6 +71,15 @@ type answerRequest struct {
 
 type answerService struct {
 	client *answerClient
+}
+
+type tokenRequest struct {
+	ChatID int64 `json:"chat_id"`
+}
+
+type tokenResponse struct {
+	Token     string `json:"token"`
+	ExpiresAt int64  `json:"expires_at"`
 }
 
 func main() {
@@ -91,9 +109,10 @@ func main() {
 
 	svc := &userService{client: newUserClient()}
 	answerSvc := newAnswerService()
+	webAdminSvc := newWebAdminService()
 
 	e := setupHTTPServer(log)
-	registerBotHandlers(log, bot, svc, answerSvc)
+	registerBotHandlers(log, bot, svc, answerSvc, webAdminSvc)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -136,6 +155,18 @@ func newAnswerService() *answerService {
 	}}
 }
 
+func newWebAdminService() *webAdminService {
+	baseURL := strings.TrimRight(os.Getenv("WEB_ADMIN_URL"), "/")
+	if baseURL == "" {
+		baseURL = "http://web-admin"
+	}
+
+	return &webAdminService{client: &webAdminClient{
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+		baseURL:    baseURL,
+	}}
+}
+
 func setupHTTPServer(log *logrus.Logger) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
@@ -161,9 +192,13 @@ func startHTTPServer(log *logrus.Logger, e *echo.Echo) {
 	}()
 }
 
-func registerBotHandlers(log *logrus.Logger, bot *telebot.Bot, svc *userService, answerSvc *answerService) {
+func registerBotHandlers(log *logrus.Logger, bot *telebot.Bot, svc *userService, answerSvc *answerService, webAdminSvc *webAdminService) {
 	bot.Handle("/start", func(c telebot.Context) error {
 		return handleStartCommand(c, log, svc)
+	})
+
+	bot.Handle("/cabinet", func(c telebot.Context) error {
+		return handleCabinetCommand(c, log, webAdminSvc)
 	})
 
 	bot.Handle(telebot.OnText, func(c telebot.Context) error {
@@ -220,6 +255,27 @@ func handleStartCommand(c telebot.Context, log *logrus.Logger, svc *userService)
 	}).Info("telegram user registered")
 
 	return c.Send("Welcome! You have been registered.")
+}
+
+func handleCabinetCommand(c telebot.Context, log *logrus.Logger, webAdminSvc *webAdminService) error {
+	chat := c.Chat()
+	if chat == nil {
+		log.Error("cannot create cabinet link: missing chat information")
+		return c.Send("Не получилось открыть кабинет: отсутствует информация о чате.")
+	}
+
+	token, err := webAdminSvc.createToken(context.Background(), tokenRequest{ChatID: chat.ID})
+	if err != nil {
+		log.WithError(err).WithField("chat_id", chat.ID).Error("create web-admin token failed")
+		return c.Send("Не получилось открыть кабинет, попробуйте позже.")
+	}
+
+	link := webAdminSvc.cabinetLink(token.Token)
+	log.WithFields(logrus.Fields{
+		"chat_id": chat.ID,
+	}).Info("web-admin cabinet link created")
+
+	return c.Send("Откройте личный кабинет: " + link)
 }
 
 func handleTextMessage(c telebot.Context, log *logrus.Logger, answerSvc *answerService) error {
@@ -311,6 +367,51 @@ func (c *userClient) doJSONRequest(ctx context.Context, method, path string, in 
 	return nil
 }
 
+func (c *webAdminClient) doJSONRequest(ctx context.Context, method, path string, in any, out any) error {
+	var body io.Reader
+	if in != nil {
+		payload, err := json.Marshal(in)
+		if err != nil {
+			return fmt.Errorf("marshal request body: %w", err)
+		}
+		body = bytes.NewReader(payload)
+	} else {
+		body = nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if out == nil {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return fmt.Errorf("unexpected status %d", resp.StatusCode)
+		}
+		return nil
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+
+	return nil
+}
+
 func (s *userService) userExists(ctx context.Context, chatID int64) (bool, error) {
 	var user telegramUser
 	if err := s.client.doJSONRequest(ctx, http.MethodGet, fmt.Sprintf("/%d", chatID), nil, &user); err != nil {
@@ -330,6 +431,18 @@ func (s *userService) listUsers(ctx context.Context) ([]telegramUser, error) {
 		return nil, err
 	}
 	return users, nil
+}
+
+func (s *webAdminService) createToken(ctx context.Context, req tokenRequest) (*tokenResponse, error) {
+	var resp tokenResponse
+	if err := s.client.doJSONRequest(ctx, http.MethodPost, "/internal/token", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (s *webAdminService) cabinetLink(token string) string {
+	return s.client.baseURL + "/c/" + token
 }
 
 func (s *answerService) saveText(ctx context.Context, req answerRequest) error {
