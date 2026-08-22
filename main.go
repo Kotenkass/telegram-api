@@ -158,7 +158,7 @@ func newAnswerService() *answerService {
 func newWebAdminService() *webAdminService {
 	baseURL := strings.TrimRight(os.Getenv("WEB_ADMIN_URL"), "/")
 	if baseURL == "" {
-		baseURL = "http://web-admin"
+		baseURL = "http://web-admin:8080"
 	}
 
 	return &webAdminService{client: &webAdminClient{
