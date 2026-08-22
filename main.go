@@ -54,7 +54,8 @@ type userService struct {
 }
 
 type webAdminService struct {
-	client *webAdminClient
+	client     *webAdminClient
+	publicBase string
 }
 
 type answerClient struct {
@@ -156,15 +157,26 @@ func newAnswerService() *answerService {
 }
 
 func newWebAdminService() *webAdminService {
-	baseURL := strings.TrimRight(os.Getenv("WEB_ADMIN_URL"), "/")
+	baseURL := strings.TrimRight(os.Getenv("WEB_ADMIN_INTERNAL_URL"), "/")
+	if baseURL == "" {
+		baseURL = strings.TrimRight(os.Getenv("WEB_ADMIN_URL"), "/")
+	}
 	if baseURL == "" {
 		baseURL = "http://web-admin:8080"
 	}
 
-	return &webAdminService{client: &webAdminClient{
-		httpClient: &http.Client{Timeout: 5 * time.Second},
-		baseURL:    baseURL,
-	}}
+	publicBase := strings.TrimRight(os.Getenv("WEB_ADMIN_PUBLIC_URL"), "/")
+	if publicBase == "" {
+		publicBase = "https://admin.sparktonapp.ru"
+	}
+
+	return &webAdminService{
+		client: &webAdminClient{
+			httpClient: &http.Client{Timeout: 5 * time.Second},
+			baseURL:    baseURL,
+		},
+		publicBase: publicBase,
+	}
 }
 
 func setupHTTPServer(log *logrus.Logger) *echo.Echo {
@@ -442,7 +454,7 @@ func (s *webAdminService) createToken(ctx context.Context, req tokenRequest) (*t
 }
 
 func (s *webAdminService) cabinetLink(token string) string {
-	return s.client.baseURL + "/c/" + token
+	return s.publicBase + "/c/" + token
 }
 
 func (s *answerService) saveText(ctx context.Context, req answerRequest) error {

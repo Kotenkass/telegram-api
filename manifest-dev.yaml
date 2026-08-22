@@ -125,6 +125,10 @@ spec:
                 secretKeyRef:
                   name: telegram-api-dev-env
                   key: USER_SERVICE_URL
+            - name: WEB_ADMIN_INTERNAL_URL
+              value: http://web-admin.dev.svc.cluster.local:8080
+            - name: WEB_ADMIN_PUBLIC_URL
+              value: https://admin.sparktonapp.ru
             - name: LOG_LEVEL
               value: debug
           readinessProbe:
