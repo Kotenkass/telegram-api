@@ -429,20 +429,23 @@ func (s *userService) userExists(ctx context.Context, chatID int64) (bool, error
 	if err := s.client.doJSONRequest(ctx, http.MethodGet, fmt.Sprintf("/%d", chatID), nil, &user); err != nil {
 		return false, err
 	}
-	return true, nil
+	return user.ChatID != 0, nil
 }
 
 func (s *userService) createUser(ctx context.Context, user telegramUser) error {
 	var created telegramUser
-	return s.client.doJSONRequest(ctx, http.MethodPost, "/", user, &created)
+	return s.client.doJSONRequest(ctx, http.MethodPost, "/users", user, &created)
 }
 
 func (s *userService) listUsers(ctx context.Context) ([]telegramUser, error) {
-	var users []telegramUser
-	if err := s.client.doJSONRequest(ctx, http.MethodGet, "/", nil, &users); err != nil {
+	type listResponse struct {
+		Data []telegramUser `json:"data"`
+	}
+	var resp listResponse
+	if err := s.client.doJSONRequest(ctx, http.MethodGet, "/users", nil, &resp); err != nil {
 		return nil, err
 	}
-	return users, nil
+	return resp.Data, nil
 }
 
 func (s *webAdminService) createToken(ctx context.Context, req tokenRequest) (*tokenResponse, error) {
