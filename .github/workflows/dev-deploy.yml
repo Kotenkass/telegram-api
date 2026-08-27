@@ -72,7 +72,7 @@ jobs:
           kubectl --kubeconfig "$KUBECONFIG" create secret generic telegram-api-dev-env \
             --namespace "$NAMESPACE" \
             --from-literal=REDIS_URL="redis://redis-dev.${NAMESPACE}.svc.cluster.local:6379/0" \
-            --from-literal=USER_SERVICE_URL="https://user-service.${NAMESPACE}.svc.cluster.local:8080" \
+            --from-literal=USER_SERVICE_URL="http://user-service.${NAMESPACE}.svc.cluster.local:8080" \
             --dry-run=client -o yaml | kubectl --kubeconfig "$KUBECONFIG" apply -f -
 
       - name: Create or update Docker Hub pull secret
