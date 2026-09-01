@@ -22,7 +22,7 @@ spec:
             - name: TELEGRAM_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: telegram-api-env
+                  name: telegram-api-token
                   key: TELEGRAM_TOKEN
             - name: REDIS_URL
               valueFrom:
@@ -34,3 +34,16 @@ spec:
                 secretKeyRef:
                   name: telegram-api-env
                   key: USER_SERVICE_URL
+            - name: WEB_ADMIN_INTERNAL_URL
+              value: http://web-admin:8080
+            - name: WEB_ADMIN_PUBLIC_URL
+              value: https://admin.sparktonapp.ru
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+              ephemeral-storage: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+              ephemeral-storage: 128Mi
